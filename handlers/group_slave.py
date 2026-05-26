@@ -286,8 +286,20 @@ async def on_chat_member_update(update: Update, context):
             pass
 
 
+async def delete_join_message(update: Update, context):
+    try:
+        await update.message.delete()
+    except Exception as e:
+        logger.debug("删除入群通知失败: %s", e)
+
+
 def register_group_slave(app, group=0) -> None:
     """全群组 handler 注册入口（主群 + 附属群）"""
+    app.add_handler(MessageHandler(
+        (main_group | slave_group) & filters.StatusUpdate.NEW_CHAT_MEMBERS,
+        delete_join_message,
+    ), group=group)
+
     app.add_handler(MessageHandler(
         (main_group | slave_group) & filters.TEXT & ~filters.COMMAND,
         slave_guard_handler,
