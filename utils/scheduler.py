@@ -1,10 +1,13 @@
 """
-Apscheduler 定时引擎 — 老师广告轮播 + 自动开奖
+Apscheduler 定时引擎 — 老师广告轮播 + 自动开奖 + 数据库定时备份
 """
 import json
 import logging
 import os
 import random
+import shutil
+import subprocess
+import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -33,8 +36,12 @@ def init_scheduler(app, ad_interval: int = None) -> None:
         _lottery_draw_job, "interval", minutes=1,
         args=[app], id="lottery_draw", replace_existing=True,
     )
+    _scheduler.add_job(
+        _db_backup_job, "interval", hours=6,
+        args=[app], id="db_backup", replace_existing=True,
+    )
     _scheduler.start()
-    logger.info("定时引擎已启动（广告轮播 %dh/次，自动开奖 %dm/次）", AD_INTERVAL_HOURS, 1)
+    logger.info("定时引擎已启动（广告轮播 %dh/次，自动开奖 %dm/次，数据库备份 6h/次）", AD_INTERVAL_HOURS, 1)
 
 
 async def _teacher_ad_job(app):
@@ -191,3 +198,35 @@ def reschedule_ad_interval(hours: int) -> None:
     """动态修改老师轮播间隔"""
     _scheduler.reschedule_job("teacher_ad", trigger="interval", hours=hours)
     logger.info("广告轮播间隔已更新为 %d 小时", hours)
+
+
+async def _db_backup_job(app):
+    """每 6 小时自动备份数据库并发送到管理员 TG"""
+    db_path = DB_PATH
+    backup_dir = os.path.join(os.path.dirname(db_path), "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+
+    name = f"bot_database_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    backup_path = os.path.join(backup_dir, name)
+
+    try:
+        shutil.copy2(db_path, backup_path)
+    except Exception as e:
+        logger.error("数据库备份失败: %s", e)
+        return
+
+    # 删除 14 天前的旧备份
+    cutoff = datetime.now().timestamp() - 14 * 86400
+    for f in os.listdir(backup_dir):
+        fp = os.path.join(backup_dir, f)
+        if os.path.isfile(fp) and f.endswith(".db") and os.path.getmtime(fp) < cutoff:
+            os.remove(fp)
+
+    # 发送到管理员 TG
+    send_script = os.path.join(os.path.dirname(db_path), "send_backup.py")
+    try:
+        subprocess.Popen([sys.executable, send_script, backup_path], creationflags=subprocess.CREATE_NO_WINDOW)
+    except Exception as e:
+        logger.error("备份发送失败: %s", e)
+
+    logger.info("数据库已备份: %s", name)
