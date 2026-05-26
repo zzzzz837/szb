@@ -53,7 +53,7 @@ async def active_points_handler(update: Update, context):
 
     # 内存级每日计数（bot 重启后重置，可接受）
     daily = context.bot_data.setdefault("chat_counts", {})
-    key = f"{tg_id}_{today}"
+    key = f"{update.effective_chat.id}_{tg_id}_{today}"
     if daily.get(key, 0) >= 300:
         return
 
@@ -182,102 +182,133 @@ async def sign_in_handler(update: Update, context):
     await update.message.reply_text(text)
 
 
-# ============================== 3. 三大排行榜 ==============================
+# ============================== 3. 排行榜（翻页 Top 100） ==============================
 
-async def leaderboard_handler(update: Update, context):
-    """今日排行 / 活跃排行 / 积分排行 / 邀请排行"""
-    text = update.message.text.strip()
-    chat_id = update.effective_chat.id
+_PAGE_SIZE = 10
+
+
+async def _build_leaderboard_page(chat_id: int, rank_type: str, page: int, context) -> tuple:
+    """构建排行榜某页内容，返回 (text, keyboard)"""
+    start = (page - 1) * _PAGE_SIZE
+    end = start + _PAGE_SIZE
+    total = 0
 
     async with aiosqlite.connect(DB_PATH) as db:
-        if text == "今日排行":
+        if rank_type == "today":
             daily = context.bot_data.get("chat_counts", {})
             today = _today()
             raw = {}
             for k, v in daily.items():
-                uid_s, d = k.split("_", 1)
-                if d == today:
-                    raw[int(uid_s)] = raw.get(int(uid_s), 0) + v
-            top = sorted(raw.items(), key=lambda x: x[1], reverse=True)[:20]
-
+                parts = k.split("_", 2)
+                if len(parts) == 3 and parts[2] == today and int(parts[0]) == chat_id:
+                    raw[int(parts[1])] = raw.get(int(parts[1]), 0) + v
+            top = sorted(raw.items(), key=lambda x: x[1], reverse=True)[:100]
             if not top:
-                await update.message.reply_text("📭 今日暂无活跃数据。")
-                return
+                return "📭 今日暂无活跃数据。", None
+            total = len(top)
+            page_data = top[start:end]
+            ids = [u for u, _ in page_data]
+            where = ",".join("?" for _ in ids)
+            async with db.execute(f"SELECT tg_id, username FROM users WHERE tg_id IN ({where})", ids) as cur:
+                nm = {r[0]: r[1] for r in await cur.fetchall()}
+            icon, title, unit = "👑", "今日群活跃", "条"
+            items = [(uid, cnt, nm.get(uid)) for uid, cnt in page_data]
 
-            lines = ["👑 今日群活跃排行榜 (Top 20):"]
-            ids = [u for u, _ in top]
-            placeholders = ",".join("?" for _ in ids)
+        elif rank_type == "active":
             async with db.execute(
-                f"SELECT tg_id, username FROM users WHERE tg_id IN ({placeholders})",
-                ids,
-            ) as cur:
-                name_map = {r[0]: r[1] for r in await cur.fetchall()}
-
-            for i, (uid, cnt) in enumerate(top, 1):
-                lines.append(f"{i}. {_display(uid, name_map.get(uid))} — {cnt} 条")
-            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-        elif text == "活跃排行":
-            async with db.execute(
-                "SELECT tg_id, username, total_msgs FROM group_members "
-                "WHERE chat_id = ? ORDER BY total_msgs DESC LIMIT 20",
+                "SELECT tg_id, username, total_msgs FROM group_members WHERE chat_id = ? ORDER BY total_msgs DESC LIMIT 100",
                 (chat_id,),
             ) as cur:
                 rows = await cur.fetchall()
-
             if not rows:
-                await update.message.reply_text("📭 暂无发言数据。")
-                return
+                return "📭 暂无发言数据。", None
+            total = len(rows)
+            page_data = rows[start:end]
+            icon, title, unit = "🔥", "群活跃总", "条"
+            items = [(uid, uname, msgs) for uid, uname, msgs in page_data]
 
-            lines = ["🔥 群活跃总排行 (Top 20):"]
-            for i, (uid, uname, msgs) in enumerate(rows, 1):
-                lines.append(f"{i}. {_display(uid, uname)} — {msgs} 条")
-            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-        elif text == "积分排行":
+        elif rank_type == "points":
             async with db.execute(
-                "SELECT tg_id, username, points FROM group_members "
-                "WHERE chat_id = ? ORDER BY points DESC LIMIT 20",
+                "SELECT tg_id, username, points FROM group_members WHERE chat_id = ? ORDER BY points DESC LIMIT 100",
                 (chat_id,),
             ) as cur:
                 rows = await cur.fetchall()
-
             if not rows:
-                await update.message.reply_text("📭 暂无积分数据。")
-                return
+                return "📭 暂无积分数据。", None
+            total = len(rows)
+            page_data = rows[start:end]
+            icon, title, unit = "🏆", "群积分", "分"
+            items = [(uid, uname, pts) for uid, uname, pts in page_data]
 
-            lines = ["🏆 群积分排行榜 (Top 20):"]
-            for i, (uid, uname, pts) in enumerate(rows, 1):
-                lines.append(f"{i}. {_display(uid, uname)} — {pts} 分")
-            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-        elif text == "邀请排行":
+        elif rank_type == "invite":
             async with db.execute(
-                "SELECT inviter_id, COUNT(*) AS cnt "
-                "FROM invitations WHERE status = 'SUCCESS' "
-                "GROUP BY inviter_id ORDER BY cnt DESC LIMIT 20",
+                "SELECT inviter_id, COUNT(*) AS cnt FROM invitations WHERE status = 'SUCCESS' "
+                "GROUP BY inviter_id ORDER BY cnt DESC LIMIT 100",
             ) as cur:
-                invites = await cur.fetchall()
+                rows = await cur.fetchall()
+            if not rows:
+                return "📭 暂无邀请数据。", None
+            total = len(rows)
+            page_data = rows[start:end]
+            ids = [r[0] for r in page_data]
+            where = ",".join("?" for _ in ids)
+            async with db.execute(f"SELECT tg_id, username FROM users WHERE tg_id IN ({where})", ids) as cur:
+                nm = {r[0]: r[1] for r in await cur.fetchall()}
+            icon, title, unit = "🎯", "邀请", "人"
+            items = [(uid, cnt, nm.get(uid)) for uid, cnt in page_data]
 
-            if not invites:
-                await update.message.reply_text("📭 暂无邀请数据。")
-                return
+    lines = [f"{icon} {title}排行榜（第{page}/{max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)}页）"]
+    for i, (uid, val, uname) in enumerate(items, start + 1):
+        lines.append(f"{i}. {_display(uid, uname)} — {val} {unit}")
+    text = "\n".join(lines)
 
-            ids = [r[0] for r in invites]
-            placeholders = ",".join("?" for _ in ids)
-            async with db.execute(
-                f"SELECT tg_id, username FROM users WHERE tg_id IN ({placeholders})",
-                ids,
-            ) as cur:
-                name_map = {r[0]: r[1] for r in await cur.fetchall()}
-
-            lines = ["🎯 邀请排行榜 (Top 20):"]
-            for i, (uid, cnt) in enumerate(invites, 1):
-                lines.append(f"{i}. {_display(uid, name_map.get(uid))} — {cnt} 人")
-            await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀️ 上一页", callback_data=f"lb_{rank_type}_{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("▶️ 下一页", callback_data=f"lb_{rank_type}_{page + 1}"))
+    kb = InlineKeyboardMarkup([nav]) if nav else None
+    return text, kb
 
 
-# ============================== 4. 管理员控分 ==============================
+async def leaderboard_handler(update: Update, context):
+    """排行榜入口 — 显示第 1 页"""
+    type_map = {"今日排行": "today", "活跃排行": "active", "积分排行": "points", "邀请排行": "invite"}
+    rank_type = type_map.get(update.message.text.strip())
+    if not rank_type:
+        return
+    content, kb = await _build_leaderboard_page(update.effective_chat.id, rank_type, 1, context)
+    await update.message.reply_text(content, reply_markup=kb, parse_mode="HTML")
+
+
+async def leaderboard_page_callback(update: Update, context):
+    """排行榜翻页"""
+    q = update.callback_query
+    await q.answer()
+    parts = q.data.split("_")  # lb_today_2, lb_points_1
+    content, kb = await _build_leaderboard_page(
+        update.effective_chat.id, parts[1], int(parts[2]), context,
+    )
+    await q.edit_message_text(content, reply_markup=kb, parse_mode="HTML")
+
+
+# ============================== 4. 邀请链接 ==============================
+
+
+async def invite_handler(update: Update, context):
+    """生成个人邀请链接"""
+    bot_me = context.bot_data.get("bot_me")
+    if not bot_me:
+        bot_me = await context.bot.get_me()
+        context.bot_data["bot_me"] = bot_me
+    link = f"https://t.me/{bot_me.username}?start=invite_{update.effective_user.id}"
+    await update.message.reply_text(
+        f"🔗 你的专属邀请链接：\n{link}\n\n"
+        f"分享给好友，对方通过此链接注册后你将获得邀请奖励！",
+    )
+
+
+# ============================== 5. 管理员控分 ==============================
 
 async def admin_points_handler(update: Update, context):
     """加积分N / 减积分N，需回复目标用户"""
@@ -317,7 +348,7 @@ async def admin_points_handler(update: Update, context):
     )
 
 
-# ============================== 5. 管理员禁言/解禁 ==============================
+# ============================== 6. 管理员禁言/解禁 ==============================
 
 
 async def mute_handler(update: Update, context):
@@ -370,7 +401,7 @@ async def unmute_handler(update: Update, context):
         await update.message.reply_text(f"❌ 解禁失败：{e}")
 
 
-# ============================== 6. 查积分 / 积分兑换 / 抽奖列表 ==============================
+# ============================== 7. 查积分 / 积分兑换 / 抽奖列表 ==============================
 
 
 async def my_points_handler(update: Update, context):
@@ -434,7 +465,7 @@ async def lottery_list_handler(update: Update, context):
         await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
 
-# ============================== 7. 老师触发 ==============================
+# ============================== 8. 老师触发 ==============================
 
 async def _load_teachers(context):
     """缓存 60s 的老师列表"""
@@ -506,6 +537,16 @@ def register_group_main(app) -> None:
     app.add_handler(MessageHandler(
         (main_group | slave_group) & filters.Regex(r"^(今日排行|活跃排行|积分排行|邀请排行)$"),
         leaderboard_handler,
+    ))
+
+    # 排行榜翻页
+    app.add_handler(CallbackQueryHandler(
+        leaderboard_page_callback, pattern=r"^lb_(today|active|points|invite)_\d+$",
+    ))
+
+    # 邀请链接
+    app.add_handler(MessageHandler(
+        (main_group | slave_group) & filters.Regex(r"^邀请$"), invite_handler,
     ))
 
     # 管理员控分
