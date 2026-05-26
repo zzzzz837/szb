@@ -3,28 +3,30 @@
 # 我在 GitHub 上更新代码后，bot 重启时自动拉取最新版
 
 $BotDir = "d:\Claude\TGbot-1"
-$LockFile = "$BotDir\run_bot.lock"
-$PythonExe = "C:\Users\User002\AppData\Local\Python\pythoncore-3.14-64\python.exe"
+$PythonDir = "C:\Users\User002\AppData\Local\Python\pythoncore-3.14-64"
+$PythonExe = "$PythonDir\python.exe"
+$GitDir = "C:\Users\User002\AppData\Local\Programs\Git\bin"
 
-# Ensure git and python are in PATH
-$env:Path = "C:\Users\User002\AppData\Local\Python\pythoncore-3.14-64;C:\Users\User002\AppData\Local\Programs\Git\bin;$env:Path"
+# Put python/git at front of PATH to outrank WindowsApps stub
+$env:Path = "$PythonDir;$GitDir;$env:Path"
 
-# ----- 单实例保护 -----
-if (Test-Path $LockFile) {
-    $oldPid = Get-Content $LockFile -Raw
-    if ($oldPid -and (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) {
-        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] run_bot is already running (PID=$oldPid), exit" -ForegroundColor Red
+# ----- 单实例保护（Named Mutex，比 lock 文件可靠）-----
+$mutex = New-Object System.Threading.Mutex($false, "Global\RunBotTG")
+try {
+    if (-not $mutex.WaitOne(0)) {
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] run_bot is already running, exit" -ForegroundColor Red
         Start-Sleep -Seconds 2
         exit
     }
+} catch {
+    # Mutex abandoned by crashed instance -> we still own it, proceed
 }
-$PID | Out-File -Encoding utf8 $LockFile
 
 while ($true) {
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Starting Bot ..."
     Set-Location $BotDir
 
-    # Kill old processes to avoid 409 Conflict
+    # Kill ALL python.exe (bot instances + orphaned stubs)
     Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Seconds 3
 
@@ -54,4 +56,4 @@ while ($true) {
     Start-Sleep -Seconds 3
 }
 
-Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
+$mutex.Dispose()
