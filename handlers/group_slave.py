@@ -7,7 +7,7 @@ import re
 import time
 
 import aiosqlite
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import MessageHandler, filters
 
 from config import ADMIN_IDS, CHANNEL_ID, DB_PATH
@@ -182,14 +182,31 @@ async def slave_guard_handler(update: Update, context):
         except Exception as e:
             logger.warning("删消息失败: %s", e)
 
-        warn_text = f"{user.full_name} 请先加入以下群组后再发言："
+        # 禁言用户
+        try:
+            await context.bot.restrict_chat_member(
+                chat_id=msg.chat_id,
+                user_id=user.id,
+                permissions=ChatPermissions(can_send_messages=False),
+            )
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute(
+                    "INSERT OR REPLACE INTO guard_muted (tg_id, chat_id, muted_at) VALUES (?, ?, ?)",
+                    (user.id, msg.chat_id, int(time.time())),
+                )
+                await db.commit()
+            logger.info("群组校验禁言 user=%d chat=%d", user.id, msg.chat_id)
+        except Exception as e:
+            logger.warning("群组校验禁言失败 chat=%d user=%d: %s", msg.chat_id, user.id, e)
+
+        warn_text = f"{user.full_name} 您已被禁言，请先加入以下群组后等待自动解禁："
         buttons = [
             [InlineKeyboardButton(f"📢 加入 {title}", url=link)]
             for title, link in failed_channels if link
         ]
         kb = InlineKeyboardMarkup(buttons) if buttons else None
         warning = await context.bot.send_message(msg.chat_id, warn_text, reply_markup=kb)
-        asyncio.create_task(_delete_later(context.bot, msg.chat_id, warning.message_id, 10))
+        asyncio.create_task(_delete_later(context.bot, msg.chat_id, warning.message_id, 30))
         return
 
     # 3. 已通过 → 检测裂变

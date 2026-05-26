@@ -1246,6 +1246,8 @@ async def risk_dashboard(update: Update, context):
         ) as cur:
             row = await cur.fetchone()
             guard_on = row and row[0] == "1"
+        async with db.execute("SELECT COUNT(*) FROM guard_muted") as cur:
+            guard_muted_count = (await cur.fetchone())[0]
 
     guard_status = "✅ 已开启" if guard_on else "❌ 已关闭"
     guard_toggle_data = "admin_guard_off" if guard_on else "admin_guard_on"
@@ -1259,7 +1261,8 @@ async def risk_dashboard(update: Update, context):
         f"🛒 上架商品：{active_products}\n"
         f"🎁 进行中抽奖：{active_lotteries}\n"
         f"👩‍🏫 上榜老师：{total_teachers}\n\n"
-        f"🔒 群组校验：{guard_status}"
+        f"🔒 群组校验：{guard_status}\n"
+        f"🔇 被禁言用户：{guard_muted_count}"
     )
     await q.edit_message_text(
         text,

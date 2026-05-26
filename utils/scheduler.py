@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 
 from config import AD_INTERVAL_HOURS, DB_PATH, MAIN_GROUP_ID
 
@@ -39,6 +39,10 @@ def init_scheduler(app, ad_interval: int = None) -> None:
     _scheduler.add_job(
         _db_backup_job, "interval", hours=6,
         args=[app], id="db_backup", replace_existing=True,
+    )
+    _scheduler.add_job(
+        _guard_unmute_job, "interval", seconds=15,
+        args=[app], id="guard_unmute", replace_existing=True,
     )
     _scheduler.start()
     logger.info("定时引擎已启动（广告轮播 %dh/次，自动开奖 %dm/次，数据库备份 6h/次）", AD_INTERVAL_HOURS, 1)
@@ -192,6 +196,65 @@ async def _exec_draw(app, lid, title, prize, target_id, winner_count):
             )
         except Exception as e:
             logger.warning("通知中奖者 %d 失败: %s", wid, e)
+
+
+async def _guard_unmute_job(app):
+    """每 15s 检查被禁言用户是否已加入需关注的群组，自动解禁"""
+    bot = app.bot
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT value FROM settings WHERE key = 'guard_enabled'",
+        ) as cur:
+            row = await cur.fetchone()
+            if not row or row[0] != "1":
+                return
+
+        async with db.execute("SELECT tg_id, chat_id FROM guard_muted") as cur:
+            muted = await cur.fetchall()
+        if not muted:
+            return
+
+        async with db.execute(
+            "SELECT chat_id FROM required_channels ORDER BY id",
+        ) as cur:
+            required = [r[0] for r in await cur.fetchall()]
+        if not required:
+            return
+
+    for tg_id, chat_id in muted:
+        all_in = True
+        for req_id in required:
+            try:
+                member = await bot.get_chat_member(chat_id=req_id, user_id=tg_id)
+                if member.status not in ("member", "administrator", "creator"):
+                    all_in = False
+                    break
+            except Exception:
+                all_in = False
+                break
+
+        if all_in:
+            try:
+                await bot.restrict_chat_member(
+                    chat_id=chat_id,
+                    user_id=tg_id,
+                    permissions=ChatPermissions(
+                        can_send_messages=True,
+                        can_send_photos=True,
+                        can_send_videos=True,
+                        can_send_other_messages=True,
+                        can_add_web_page_previews=True,
+                    ),
+                )
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "DELETE FROM guard_muted WHERE tg_id = ? AND chat_id = ?",
+                        (tg_id, chat_id),
+                    )
+                    await db.commit()
+                logger.info("自动解禁 user=%d chat=%d", tg_id, chat_id)
+            except Exception as e:
+                logger.warning("自动解禁失败 user=%d chat=%d: %s", tg_id, chat_id, e)
 
 
 def reschedule_ad_interval(hours: int) -> None:

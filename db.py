@@ -139,6 +139,16 @@ async def init_db():
         except Exception:
             pass
 
+        # 群组校验禁言表（记录被禁言用户，用于定时检查后自动解禁）
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS guard_muted (
+                tg_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                muted_at INTEGER NOT NULL,
+                PRIMARY KEY (tg_id, chat_id)
+            )
+        """)
+
         # 群成员独立数据表（用于每个群独立的排行和积分）
         await db.execute("""
             CREATE TABLE IF NOT EXISTS group_members (
