@@ -40,8 +40,17 @@ def init_scheduler(app, ad_interval: int = None) -> None:
         _db_backup_job, "interval", hours=6,
         args=[app], id="db_backup", replace_existing=True,
     )
+    _scheduler.add_job(
+        _expired_verify_job, "interval", minutes=1,
+        args=[app], id="expired_verify", replace_existing=True,
+    )
     _scheduler.start()
-    logger.info("定时引擎已启动（广告轮播 %dh/次，自动开奖 %dm/次，数据库备份 6h/次）", AD_INTERVAL_HOURS, 1)
+    logger.info("定时引擎已启动（广告轮播 %dh/次，自动开奖/过期验证 1m/次，数据库备份 6h/次）", AD_INTERVAL_HOURS)
+
+
+async def _expired_verify_job(app):
+    from handlers.join_verify import cleanup_expired_verifications
+    await cleanup_expired_verifications(context=app)
 
 
 async def _teacher_ad_job(app):

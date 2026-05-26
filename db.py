@@ -164,6 +164,17 @@ async def init_db():
             )
         """)
 
+        # 入群验证码
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS join_verify (
+                tg_id INTEGER PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                code TEXT NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+        """)
+
         await db.commit()
 
 

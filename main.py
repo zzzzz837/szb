@@ -76,6 +76,9 @@ def main() -> None:
     from handlers.group_slave import register_group_slave
     register_group_slave(app, group=-1)
 
+    from handlers.join_verify import register_join_verify
+    register_join_verify(app)
+
     # 自动注册 Bot 加入的群
     app.add_handler(ChatMemberHandler(chat_registered, chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER))
 
