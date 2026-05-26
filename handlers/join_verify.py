@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 _VERIFY_TIMEOUT = 300
 _RATE_WINDOW = 60      # 60 秒窗口
-_RATE_MAX = 10          # 最多 10 个申请
+_RATE_MAX = 30          # 最多 30 个申请
 _COOLDOWN = 120         # 超限后冷却 2 分钟
 
 
