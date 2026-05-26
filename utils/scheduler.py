@@ -222,11 +222,26 @@ async def _db_backup_job(app):
         if os.path.isfile(fp) and f.endswith(".db") and os.path.getmtime(fp) < cutoff:
             os.remove(fp)
 
+    # 距上次 TG 发送不足 6 小时则跳过，防止频繁重启导致刷屏
+    marker = os.path.join(backup_dir, ".last_backup_sent")
+    now = datetime.now().timestamp()
+    if os.path.exists(marker):
+        try:
+            last_sent = float(open(marker).read().strip())
+            if now - last_sent < 6 * 3600:
+                logger.info("距上次 TG 发送不足 6 小时，跳过云端备份")
+                return
+        except Exception:
+            pass
+
     # 发送到管理员 TG
     send_script = os.path.join(os.path.dirname(db_path), "send_backup.py")
     try:
         subprocess.Popen([sys.executable, send_script, backup_path], creationflags=subprocess.CREATE_NO_WINDOW)
+        # 记录发送时间
+        with open(marker, "w") as f:
+            f.write(str(now))
     except Exception as e:
         logger.error("备份发送失败: %s", e)
 
-    logger.info("数据库已备份: %s", name)
+    logger.info("数据库已备份并发送: %s", name)

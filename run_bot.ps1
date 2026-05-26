@@ -11,13 +11,12 @@ while ($true) {
     # 从 GitHub 拉取最新代码
     git pull 2>&1 | Out-Null
 
-    # 自动备份数据库（保留最近 14 份）
+    # 本地数据库备份（保留最近 14 份，不上传）
     $BackupDir = "$BotDir\backups"
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     if (Test-Path "bot_database.db") {
         $name = "bot_database_$(Get-Date -Format 'yyyyMMdd_HHmmss').db"
         Copy-Item "bot_database.db" "$BackupDir\$name" -Force
-        python "$BotDir\send_backup.py" "$BackupDir\$name" 2>&1 | Out-Null
         Get-ChildItem $BackupDir -Filter "*.db" | Where-Object {
             $_.LastWriteTime -lt (Get-Date).AddDays(-14)
         } | Remove-Item -Force
