@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell($env:Path += \";C:\\\\Users\\\\User002\\\\AppData\\\\Local\\\\Programs\\\\Git\\\\bin\"; cd d:\\\\Claude\\\\TGbot-1; git add -A; git commit -m \"feat: 入群通知自动删除\" ; git push)"
-    ]
-  }
-}

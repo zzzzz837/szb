@@ -19,3 +19,6 @@ Thumbs.db
 
 # 运行锁
 run_bot.lock
+
+# Claude 本地配置
+.claude/
