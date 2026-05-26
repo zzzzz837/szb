@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 import aiosqlite
 from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import MessageHandler, filters
+from telegram.ext import CallbackQueryHandler, MessageHandler, filters
 
 from config import CHAT_COOLDOWN, DB_PATH, POINTS_PER_MSG, POINTS_PER_SIGN
 from utils.filters import main_group, slave_group, is_admin
