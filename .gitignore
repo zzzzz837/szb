@@ -11,7 +11,7 @@ __pycache__/
 
 # 数据库备份
 backups/
-error.log
+error*.log
 
 # 系统文件
 Thumbs.db
