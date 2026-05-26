@@ -16,3 +16,6 @@ error.log
 # 系统文件
 Thumbs.db
 .DS_Store
+
+# 运行锁
+run_bot.lock

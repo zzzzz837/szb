@@ -5,6 +5,9 @@
 $BotDir = "d:\Claude\TGbot-1"
 $LockFile = "$BotDir\run_bot.lock"
 
+# Ensure git is in PATH
+$env:Path += ";C:\Users\User002\AppData\Local\Programs\Git\bin"
+
 # ----- 单实例保护 -----
 if (Test-Path $LockFile) {
     $oldPid = Get-Content $LockFile -Raw
