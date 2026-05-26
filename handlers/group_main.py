@@ -440,6 +440,11 @@ async def shop_handler(update: Update, context):
 async def lottery_list_handler(update: Update, context):
     """进行中的抽奖列表"""
     async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT value FROM settings WHERE key = 'lottery_enabled'") as cur:
+            row = await cur.fetchone()
+            if not row or row[0] != "1":
+                await update.message.reply_text("抽奖功能已关闭。")
+                return
         async with db.execute(
             "SELECT id, title, description, prize, cost_points, draw_time, "
             "winner_count FROM lotteries WHERE is_active = 1 ORDER BY id DESC",

@@ -308,6 +308,12 @@ async def _check_lottery_channels(user_id: int, bot) -> tuple[bool, list]:
 async def _process_lottery_join(user_id: int, username: str, lottery_id: int, bot, reply_func):
     """抽奖参与核心逻辑。返回用户可见的提示文本，None=成功"""
     async with aiosqlite.connect(DB_PATH) as db:
+        # 0. 检查抽奖功能是否开启
+        async with db.execute("SELECT value FROM settings WHERE key = 'lottery_enabled'") as cur:
+            row = await cur.fetchone()
+            if not row or row[0] != "1":
+                return "抽奖功能已关闭。"
+
         async with db.execute(
             "SELECT id, title, cost_points, is_active, max_participants, "
             "max_entries_per_user, min_msgs FROM lotteries WHERE id = ?",

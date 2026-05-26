@@ -367,7 +367,17 @@ async def product_edit_value(update: Update, context):
 async def lottery_menu(update: Update, context):
     q = update.callback_query
     await q.answer()
-    await q.edit_message_text("🎁 抽奖管理", reply_markup=lottery_kb())
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT value FROM settings WHERE key = 'lottery_enabled'") as cur:
+            row = await cur.fetchone()
+            enabled = row and row[0] == "1"
+    status = "🟢 开启" if enabled else "🔴 关闭"
+    kb = InlineKeyboardMarkup([
+        [_btn("➕ 创建抽奖", "admin_lottery_add"), _btn("📋 抽奖列表", "admin_lottery_list")],
+        [_btn(f"🎲 抽奖状态: {status}", "admin_lottery_toggle")],
+        [_btn("🔙 返回主菜单", "admin_main")],
+    ])
+    await q.edit_message_text("🎁 抽奖管理", reply_markup=kb)
     return LOTTERY_MENU
 
 
@@ -741,6 +751,20 @@ async def lottery_participants_view(update: Update, context):
     await q.edit_message_text(text,
         reply_markup=InlineKeyboardMarkup([[_btn("🔙 返回", f"admin_lottery_detail_{lid}")]]))
     return LOTTERY_PARTICIPANTS
+
+
+async def lottery_toggle(update: Update, context):
+    """开/关抽奖功能"""
+    q = update.callback_query
+    await q.answer()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT value FROM settings WHERE key = 'lottery_enabled'") as cur:
+            row = await cur.fetchone()
+        new_val = "0" if (row and row[0] == "1") else "1"
+        await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('lottery_enabled', ?)", (new_val,))
+        await db.commit()
+    logger.info("抽奖功能 %s", "开启" if new_val == "1" else "关闭")
+    return await lottery_menu(update, context)
 
 
 async def lottery_remove_execute(update: Update, context):
@@ -1465,6 +1489,7 @@ def get_admin_conv_handler() -> ConversationHandler:
             LOTTERY_MENU: [
                 CallbackQueryHandler(lottery_add_start, pattern=r"^admin_lottery_add$"),
                 CallbackQueryHandler(lottery_list, pattern=r"^admin_lottery_list$"),
+                CallbackQueryHandler(lottery_toggle, pattern=r"^admin_lottery_toggle$"),
                 CallbackQueryHandler(go_main, pattern=r"^admin_main$"),
             ],
             LOTTERY_ADD_TITLE: [

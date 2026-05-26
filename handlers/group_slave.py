@@ -173,6 +173,10 @@ async def slave_guard_handler(update: Update, context):
     if await _ban_link_spammer(update, context):
         return
 
+    # 管理员不受群组校验限制
+    if user.id in ADMIN_IDS:
+        return
+
     # 2. 需关注的群组校验（DB 列表优先，兜底 config.CHANNEL_ID）
     failed_channels = await _check_channels(user.id, context.bot)
     if failed_channels is not None:

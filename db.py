@@ -115,10 +115,11 @@ async def init_db():
                 value TEXT
             )
         """)
-        # 默认开启群组校验
-        await db.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('guard_enabled', '1')"
-        )
+        # 默认开启群组校验 和 抽奖功能
+        for k, v in (('guard_enabled', '1'), ('lottery_enabled', '1')):
+            await db.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v)
+            )
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS teachers (
