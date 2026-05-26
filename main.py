@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import aiosqlite
@@ -60,8 +61,22 @@ async def chat_registered(update: Update, context) -> None:
             await refresh_slave_groups()
 
 
+async def error_handler(update: object, context) -> None:
+    from telegram.error import Conflict, NetworkError, TimedOut
+    err = context.error
+    if isinstance(err, Conflict):
+        logger.warning("409 Conflict — 另一个实例正在轮询，5 秒后重试")
+        await asyncio.sleep(5)
+        return
+    if isinstance(err, (NetworkError, TimedOut)):
+        logger.warning("网络错误: %s", err)
+        return
+    logger.error("未处理的异常: %s", err, exc_info=err)
+
+
 def main() -> None:
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    app.add_error_handler(error_handler)
 
     # ===== 各模块 handler 注册入口 =====
     from handlers.admin import get_admin_conv_handler

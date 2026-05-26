@@ -28,7 +28,9 @@ while ($true) {
 
     # Kill ALL python.exe (bot instances + orphaned stubs)
     Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Seconds 3
+    Start-Sleep -Seconds 2
+    taskkill /F /IM python.exe 2>$null
+    Start-Sleep -Seconds 8
 
     # Pull latest code from GitHub
     git pull 2>&1 | Out-Null
