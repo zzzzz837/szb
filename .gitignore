@@ -9,6 +9,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# 数据库备份
+backups/
+error.log
+
 # 系统文件
 Thumbs.db
 .DS_Store

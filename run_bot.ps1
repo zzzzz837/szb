@@ -7,8 +7,21 @@ $BotDir = "d:\Claude\TGbot-1"
 while ($true) {
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 启动 Bot ..."
     Set-Location $BotDir
-    # 从 GitHub 拉取最新代码（没有新提交则静默跳过）
+
+    # 从 GitHub 拉取最新代码
     git pull 2>&1 | Out-Null
+
+    # 自动备份数据库（保留最近 14 份）
+    $BackupDir = "$BotDir\backups"
+    New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
+    if (Test-Path "bot_database.db") {
+        $name = "bot_database_$(Get-Date -Format 'yyyyMMdd_HHmmss').db"
+        Copy-Item "bot_database.db" "$BackupDir\$name" -Force
+        Get-ChildItem $BackupDir -Filter "*.db" | Where-Object {
+            $_.LastWriteTime -lt (Get-Date).AddDays(-14)
+        } | Remove-Item -Force
+    }
+
     python main.py 2>> "$BotDir\error.log"
 
     $exitCode = $LASTEXITCODE
