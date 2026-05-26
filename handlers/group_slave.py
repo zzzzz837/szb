@@ -62,29 +62,25 @@ async def _check_channels(user_id: int, bot) -> list | None:
     if not channels:
         return None  # 无要求 → 通过
 
-    failed = []       # 能明确确认用户不在的群组
-    has_uncheckable = False  # 是否有无法检查的群组
+    failed = []       # 能确认用户不在的群组
 
     for chat_id, title, invite_link in channels:
         try:
             member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
             if member.status in ("member", "administrator", "creator"):
                 return None  # 在任意一个内 → 通过
-            # 用户不在这个群 → 尝试获取邀请链接
-            if not invite_link:
-                try:
-                    invite_link = await bot.export_chat_invite_link(chat_id=chat_id)
-                except Exception:
-                    pass  # 生不成就算了
-            failed.append((title, invite_link))
-        except Exception as e:
-            # Bot 不在该群 / 无权限检查 → 跳过，不因此拦截
-            logger.warning("校验群组 %s(%d) 失败（跳过）: %s", title, chat_id, e)
-            has_uncheckable = True
+        except Exception:
+            pass  # 查不到 → 用户不在此频道，继续处理
 
-    # 全部无法检查 → 放行（避免误封）
-    if not failed and has_uncheckable:
-        return None
+        # 用户不在此群组 → 尝试获取邀请链接
+        if not invite_link:
+            try:
+                invite_link = await bot.export_chat_invite_link(chat_id=chat_id)
+            except Exception:
+                pass  # 生不成就算了
+        failed.append((title, invite_link))
+
+    return failed if failed else None
 
     return failed
 
