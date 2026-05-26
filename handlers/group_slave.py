@@ -8,7 +8,7 @@ import time
 
 import aiosqlite
 from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import MessageHandler, filters
+from telegram.ext import ChatMemberHandler, MessageHandler, filters
 
 from config import ADMIN_IDS, CHANNEL_ID, DB_PATH
 from utils.filters import main_group, slave_group
@@ -215,9 +215,81 @@ async def slave_guard_handler(update: Update, context):
         await _check_invitation_flow(update, context)
 
 
+async def on_chat_member_update(update: Update, context):
+    """监听用户加入需关注群组 → 自动解禁"""
+    member = update.chat_member
+    if not member:
+        return
+
+    chat_id = update.effective_chat.id
+    user = member.new_chat_member.user
+
+    # 只处理"加入"事件（status 变为 member/administrator/creator）
+    if member.new_chat_member.status not in ("member", "administrator", "creator"):
+        return
+    if member.old_chat_member.status in ("member", "administrator", "creator"):
+        return  # 状态没变化，忽略
+
+    # 检查这个群是否在 required_channels 中
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM required_channels WHERE chat_id = ?", (chat_id,),
+        ) as cur:
+            if not await cur.fetchone():
+                return  # 不是需关注群组，忽略
+
+        # 查询此用户在哪些群被禁言
+        async with db.execute(
+            "SELECT chat_id FROM guard_muted WHERE tg_id = ?", (user.id,),
+        ) as cur:
+            muted_chats = [r[0] for r in await cur.fetchall()]
+
+    if not muted_chats:
+        return
+
+    # 逐个解禁
+    for gid in muted_chats:
+        try:
+            await context.bot.restrict_chat_member(
+                chat_id=gid,
+                user_id=user.id,
+                permissions=ChatPermissions(
+                    can_send_messages=True,
+                    can_send_photos=True,
+                    can_send_videos=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True,
+                ),
+            )
+        except Exception as e:
+            logger.warning("自动解禁失败 chat=%d user=%d: %s", gid, user.id, e)
+            continue
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "DELETE FROM guard_muted WHERE tg_id = ? AND chat_id = ?",
+                (user.id, gid),
+            )
+            await db.commit()
+        logger.info("自动解禁 user=%d chat=%d（已加入需关注群组 %d）", user.id, gid, chat_id)
+
+        try:
+            await context.bot.send_message(
+                gid,
+                f"{user.full_name} 已加入关联群组，禁言已解除，欢迎发言！",
+            )
+        except Exception:
+            pass
+
+
 def register_group_slave(app, group=0) -> None:
     """全群组 handler 注册入口（主群 + 附属群）"""
     app.add_handler(MessageHandler(
         (main_group | slave_group) & filters.TEXT & ~filters.COMMAND,
         slave_guard_handler,
     ), group=group)
+
+    # 监听用户加入需关注群组 → 自动解禁
+    app.add_handler(ChatMemberHandler(
+        on_chat_member_update, chat_member_types=ChatMemberHandler.CHAT_MEMBER,
+    ))
