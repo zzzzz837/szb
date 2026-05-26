@@ -136,7 +136,16 @@ async def cancel(update: Update, context):
     text = "已退出管理后台 👋"
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text(text)
+        try:
+            await update.callback_query.edit_message_text(text)
+        except Exception:
+            try:
+                await update.callback_query.delete_message()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=update.callback_query.message.chat_id, text=text
+            )
     elif update.message:
         await update.message.reply_text(text)
     context.user_data.clear()
@@ -631,13 +640,19 @@ async def lottery_confirm_send(update: Update, context):
     except Exception as e:
         logger.warning("抽奖推送主群失败: %s", e)
 
-    await q.edit_message_text(
+    success_text = (
         f"✅ 抽奖创建成功！\n"
         f"标题：{data['lot_title']}\n"
         f"奖品：{data['lot_prize']}\n"
-        f"开奖时间：{draw_str}",
-        reply_markup=lottery_kb(),
+        f"开奖时间：{draw_str}"
     )
+    try:
+        await q.edit_message_text(success_text, reply_markup=lottery_kb())
+    except Exception:
+        await q.delete_message()
+        await context.bot.send_message(
+            chat_id=q.message.chat_id, text=success_text, reply_markup=lottery_kb()
+        )
     return LOTTERY_MENU
 
 
@@ -851,9 +866,8 @@ async def lottery_edit_value(update: Update, context):
 # ============================== 积分管理 ==============================
 
 
-async def points_menu(update: Update, context):
-    q = update.callback_query
-    await q.answer()
+async def _build_points_menu_text_kb():
+    """构建积分管理菜单的文本和键盘"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT tg_id, username, points FROM users ORDER BY points DESC LIMIT 20",
@@ -869,10 +883,17 @@ async def points_menu(update: Update, context):
         [_btn("➕ 加积分", "admin_points_add"), _btn("➖ 减积分", "admin_points_sub")],
         [_btn("🔙 返回主菜单", "admin_main")],
     ]
-    await q.edit_message_text(
-        "\n".join(lines) if top else "暂无积分数据。",
-        reply_markup=InlineKeyboardMarkup(kb),
-    )
+    return "\n".join(lines) if top else "暂无积分数据。", InlineKeyboardMarkup(kb)
+
+
+async def points_menu(update: Update, context):
+    text, kb = await _build_points_menu_text_kb()
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        await q.edit_message_text(text, reply_markup=kb)
+    else:
+        await update.message.reply_text(text, reply_markup=kb)
     return POINTS_MENU
 
 
@@ -1099,9 +1120,8 @@ async def teacher_remove_execute(update: Update, context):
 # ============================== 老师轮播管理 ==============================
 
 
-async def teacher_promote_menu(update: Update, context):
-    q = update.callback_query
-    await q.answer()
+async def _build_promote_menu_text_kb():
+    """构建轮播管理菜单的文本和键盘"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT id, name, is_promoted FROM teachers ORDER BY id",
@@ -1125,10 +1145,21 @@ async def teacher_promote_menu(update: Update, context):
 
     kb.append([_btn(f"⏱ 设置间隔（当前 {interval}h）", "admin_set_interval")])
     kb.append([_btn("🔙 返回", "admin_teacher")])
-    await q.edit_message_text(
-        "\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(kb),
-    )
+    return "\n".join(lines), InlineKeyboardMarkup(kb)
+
+
+async def teacher_promote_menu(update: Update, context):
+    text, kb = await _build_promote_menu_text_kb()
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        try:
+            await q.edit_message_text(text, reply_markup=kb)
+        except Exception:
+            await q.delete_message()
+            await context.bot.send_message(chat_id=q.message.chat_id, text=text, reply_markup=kb)
+    else:
+        await update.message.reply_text(text, reply_markup=kb)
     return TEACHER_PROMOTE_MENU
 
 
