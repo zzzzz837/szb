@@ -116,7 +116,7 @@ async def init_db():
             )
         """)
         # 默认开启群组校验 和 抽奖功能
-        for k, v in (('guard_enabled', '1'), ('lottery_enabled', '1')):
+        for k, v in (('guard_enabled', '1'), ('lottery_enabled', '1'), ('join_verify_enabled', '1')):
             await db.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v)
             )

@@ -13,6 +13,9 @@ from config import ADMIN_IDS, DB_PATH
 logger = logging.getLogger(__name__)
 
 _VERIFY_TIMEOUT = 300
+_RATE_WINDOW = 60      # 60 秒窗口
+_RATE_MAX = 10          # 最多 10 个申请
+_COOLDOWN = 120         # 超限后冷却 2 分钟
 
 
 async def on_join_request(update: Update, context):
@@ -29,6 +32,41 @@ async def on_join_request(update: Update, context):
         except Exception as e:
             logger.error("自动批准管理员失败 user=%d: %s", user.id, e)
         return
+
+    # 开关检查
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT value FROM settings WHERE key = 'join_verify_enabled'") as cur:
+            row = await cur.fetchone()
+            if row and row[0] == "0":
+                try:
+                    await req.approve()
+                except Exception as e:
+                    logger.warning("自动通过失败（验证已关闭）user=%d: %s", user.id, e)
+                return
+
+    # 频率限制
+    limiter = context.bot_data.setdefault("join_verify_limiter", {})
+    group_key = str(chat_id)
+    records = limiter.setdefault(group_key, [])
+    records = [t for t in records if now - t < _RATE_WINDOW + _COOLDOWN]
+    recent = [t for t in records if now - t < _RATE_WINDOW]
+    limiter[group_key] = records
+
+    if len(recent) >= _RATE_MAX:
+        cooldown_remaining = records[-1] + _RATE_WINDOW + _COOLDOWN - now if len(records) >= _RATE_MAX else _COOLDOWN
+        logger.warning("入群申请频率超限 chat=%d count=%d", chat_id, len(recent))
+        try:
+            await req.decline()
+            await context.bot.send_message(
+                user.id,
+                f"当前入群申请人数过多，系统已限流，请 {_COOLDOWN // 60} 分钟后重试。",
+            )
+        except Exception:
+            pass
+        return
+
+    records.append(now)
+    limiter[group_key] = records
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(

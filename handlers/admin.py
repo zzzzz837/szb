@@ -1301,11 +1301,20 @@ async def risk_dashboard(update: Update, context):
         ) as cur:
             row = await cur.fetchone()
             guard_on = row and row[0] == "1"
+        async with db.execute(
+            "SELECT value FROM settings WHERE key = 'join_verify_enabled'",
+        ) as cur:
+            row = await cur.fetchone()
+            verify_on = row is None or row[0] == "1"
         async with db.execute("SELECT COUNT(*) FROM guard_muted") as cur:
             guard_muted_count = (await cur.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM join_verify") as cur:
+            pending_verify = (await cur.fetchone())[0]
 
     guard_status = "✅ 已开启" if guard_on else "❌ 已关闭"
     guard_toggle_data = "admin_guard_off" if guard_on else "admin_guard_on"
+    verify_status = "✅ 已开启" if verify_on else "❌ 已关闭"
+    verify_toggle_data = "admin_verify_off" if verify_on else "admin_verify_on"
 
     text = (
         "🛡️ *风控看板*\n\n"
@@ -1317,12 +1326,15 @@ async def risk_dashboard(update: Update, context):
         f"🎁 进行中抽奖：{active_lotteries}\n"
         f"👩‍🏫 上榜老师：{total_teachers}\n\n"
         f"🔒 群组校验：{guard_status}\n"
-        f"🔇 被禁言用户：{guard_muted_count}"
+        f"🔇 被禁言用户：{guard_muted_count}\n"
+        f"🛂 入群验证：{verify_status}\n"
+        f"⏳ 待验证用户：{pending_verify}"
     )
     await q.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup([
             [_btn(f"{'🔓 关闭' if guard_on else '🔒 开启'}群组校验", guard_toggle_data)],
+            [_btn(f"{'🔓 关闭' if verify_on else '🔒 开启'}入群验证", verify_toggle_data)],
             [_btn("📢 管理需关注的群组", "admin_channels")],
             [_btn("🔙 返回主菜单", "admin_main")],
         ]),
@@ -1343,6 +1355,20 @@ async def guard_toggle(update: Update, context):
         await db.commit()
     logger.info("群组校验 %s", "开启" if new_value == "1" else "关闭")
     # 刷新看板
+    return await risk_dashboard(update, context)
+
+
+async def join_verify_toggle(update: Update, context):
+    q = update.callback_query
+    await q.answer()
+    new_value = "1" if q.data == "admin_verify_on" else "0"
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('join_verify_enabled', ?)",
+            (new_value,),
+        )
+        await db.commit()
+    logger.info("入群验证 %s", "开启" if new_value == "1" else "关闭")
     return await risk_dashboard(update, context)
 
 
@@ -1476,6 +1502,7 @@ def get_admin_conv_handler() -> ConversationHandler:
                 CallbackQueryHandler(risk_dashboard, pattern=r"^admin_risk$"),
                 CallbackQueryHandler(required_channel_list, pattern=r"^admin_channels$"),
                 CallbackQueryHandler(guard_toggle, pattern=r"^admin_guard_(on|off)$"),
+                CallbackQueryHandler(join_verify_toggle, pattern=r"^admin_verify_(on|off)$"),
                 CallbackQueryHandler(points_menu, pattern=r"^admin_points$"),
                 CallbackQueryHandler(go_main, pattern=r"^admin_main$"),
             ],
