@@ -4,9 +4,10 @@
 
 $BotDir = "d:\Claude\TGbot-1"
 $LockFile = "$BotDir\run_bot.lock"
+$PythonExe = "C:\Users\User002\AppData\Local\Python\pythoncore-3.14-64\python.exe"
 
-# Ensure git is in PATH
-$env:Path += ";C:\Users\User002\AppData\Local\Programs\Git\bin"
+# Ensure git and python are in PATH
+$env:Path = "C:\Users\User002\AppData\Local\Python\pythoncore-3.14-64;C:\Users\User002\AppData\Local\Programs\Git\bin;$env:Path"
 
 # ----- 单实例保护 -----
 if (Test-Path $LockFile) {
@@ -43,7 +44,7 @@ while ($true) {
 
     # Redirect to timestamped log (avoid file lock on crash)
     $logFile = "$BotDir\error-$(Get-Date -Format 'yyyyMMddHHmmss').log"
-    python main.py 2> $logFile
+    & $PythonExe main.py 2> $logFile
 
     # Keep only latest 50 log files
     Get-ChildItem "$BotDir\error-*.log" | Sort-Object Name -Descending | Select-Object -Skip 50 | Remove-Item -Force
