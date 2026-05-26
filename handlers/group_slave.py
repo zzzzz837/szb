@@ -109,6 +109,12 @@ async def _check_invitation_flow(update: Update, context):
         inv_id, inviter_id = invite
         await db.execute("UPDATE invitations SET status = 'SUCCESS' WHERE id = ?", (inv_id,))
         await db.execute("UPDATE users SET points = points + 50 WHERE tg_id = ?", (inviter_id,))
+        # 同步加当前群 group_members
+        await db.execute(
+            "INSERT INTO group_members (tg_id, chat_id, points, joined_at) VALUES (?, ?, 50, ?) "
+            "ON CONFLICT(tg_id, chat_id) DO UPDATE SET points = points + 50",
+            (inviter_id, update.effective_chat.id, int(time.time())),
+        )
         await db.commit()
 
     try:

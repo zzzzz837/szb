@@ -225,7 +225,7 @@ async def _build_leaderboard_page(chat_id: int, rank_type: str, page: int, conte
             total = len(rows)
             page_data = rows[start:end]
             icon, title, unit = "🔥", "群活跃总", "条"
-            items = [(uid, uname, msgs) for uid, uname, msgs in page_data]
+            items = [(uid, msgs, uname) for uid, uname, msgs in page_data]
 
         elif rank_type == "points":
             async with db.execute(
@@ -238,7 +238,7 @@ async def _build_leaderboard_page(chat_id: int, rank_type: str, page: int, conte
             total = len(rows)
             page_data = rows[start:end]
             icon, title, unit = "🏆", "群积分", "分"
-            items = [(uid, uname, pts) for uid, uname, pts in page_data]
+            items = [(uid, pts, uname) for uid, uname, pts in page_data]
 
         elif rank_type == "invite":
             async with db.execute(
