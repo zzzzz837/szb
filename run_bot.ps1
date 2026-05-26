@@ -41,8 +41,12 @@ while ($true) {
         } | Remove-Item -Force
     }
 
-    # Overwrite log to avoid file lock conflicts
-    python main.py 2> "$BotDir\error.log"
+    # Redirect to timestamped log (avoid file lock on crash)
+    $logFile = "$BotDir\error-$(Get-Date -Format 'yyyyMMddHHmmss').log"
+    python main.py 2> $logFile
+
+    # Keep only latest 50 log files
+    Get-ChildItem "$BotDir\error-*.log" | Sort-Object Name -Descending | Select-Object -Skip 50 | Remove-Item -Force
 
     $exitCode = $LASTEXITCODE
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Bot stopped (exit=$exitCode), restart in 3s" -ForegroundColor Yellow
