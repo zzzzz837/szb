@@ -1,0 +1,193 @@
+"""
+Apscheduler 定时引擎 — 老师广告轮播 + 自动开奖
+"""
+import json
+import logging
+import os
+import random
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import aiosqlite
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+
+from config import AD_INTERVAL_HOURS, DB_PATH, MAIN_GROUP_ID
+
+logger = logging.getLogger(__name__)
+
+# 确保时区检测一致
+os.environ.setdefault("TZ", "Asia/Shanghai")
+
+_scheduler = AsyncIOScheduler(timezone=ZoneInfo("Asia/Shanghai"))
+
+
+def init_scheduler(app, ad_interval: int = None) -> None:
+    """启动定时任务"""
+    interval = ad_interval if ad_interval is not None else AD_INTERVAL_HOURS
+    _scheduler.add_job(
+        _teacher_ad_job, "interval", hours=interval,
+        args=[app], id="teacher_ad", replace_existing=True,
+    )
+    _scheduler.add_job(
+        _lottery_draw_job, "interval", minutes=1,
+        args=[app], id="lottery_draw", replace_existing=True,
+    )
+    _scheduler.start()
+    logger.info("定时引擎已启动（广告轮播 %dh/次，自动开奖 %dm/次）", AD_INTERVAL_HOURS, 1)
+
+
+async def _teacher_ad_job(app):
+    """随机抽取一名主打老师，群发到所有注册群"""
+    bot = app.bot
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT name, region, price_info, photo_file_ids, channel_msg_link, contact "
+            "FROM teachers WHERE is_promoted = 1",
+        ) as cur:
+            teachers = await cur.fetchall()
+
+    if not teachers:
+        logger.debug("广告轮播：无主打老师，跳过")
+        return
+
+    t = random.choice(teachers)
+    name, region, price, photo_json, msg_link, contact = t
+
+    photo_ids = json.loads(photo_json) if photo_json else []
+    if not photo_ids:
+        logger.warning("老师 %s 无照片，跳过广告", name)
+        return
+
+    caption = (
+        f"👩‍🏫 *老师推荐：{name}*\n"
+        f"📍 地区：{region or '未设置'}\n"
+        f"💰 {price or '面议'}"
+    )
+
+    buttons = []
+    if msg_link:
+        buttons.append(InlineKeyboardButton("📎 查看频道详情", url=msg_link))
+    if contact:
+        url = contact if contact.startswith(("http://", "https://")) else f"https://t.me/{contact.lstrip('@')}"
+        buttons.append(InlineKeyboardButton("✉️ 直接联系", url=url))
+    kb = InlineKeyboardMarkup([buttons]) if buttons else None
+
+    media = [
+        InputMediaPhoto(media=fid, caption=caption if i == 0 else None)
+        for i, fid in enumerate(photo_ids)
+    ]
+
+    # 取所有注册群（主群 + 附属群）
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT chat_id FROM registered_chats") as cur:
+            chats = [row[0] for row in await cur.fetchall()]
+
+    if not chats:
+        logger.debug("广告轮播：无注册群，跳过")
+        return
+
+    for cid in chats:
+        try:
+            await bot.send_media_group(chat_id=cid, media=media)
+            if kb:
+                await bot.send_message(cid, "点击下方按钮了解更多 👇", reply_markup=kb)
+            logger.debug("广告推送成功 chat_id=%d", cid)
+        except Exception as e:
+            logger.warning("广告推送失败 chat_id=%d: %s", cid, e)
+
+
+async def _lottery_draw_job(app):
+    """每分钟轮询已到期的抽奖并开奖"""
+    now = int(datetime.now().timestamp())
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id, title, prize, target_winner_id, winner_count FROM lotteries "
+            "WHERE is_active = 1 AND draw_time <= ?", (now,),
+        ) as cur:
+            lotteries = await cur.fetchall()
+
+    for lid, title, prize, target_id, winner_count in lotteries:
+        await _exec_draw(app, lid, title, prize, target_id, winner_count)
+
+
+async def _exec_draw(app, lid, title, prize, target_id, winner_count):
+    """执行单个抽奖结算"""
+    bot = app.bot
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT tg_id, entries FROM lottery_participants WHERE lottery_id = ?", (lid,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        # 按 entries 加权构建抽奖池
+        participants = []
+        for tg_id, entries in rows:
+            participants.extend([tg_id] * entries)
+
+        if not participants:
+            await db.execute("UPDATE lotteries SET is_active = 0 WHERE id = ?", (lid,))
+            await db.commit()
+            logger.info("抽奖 %s 无参与者，已关闭", title)
+            return
+
+        # 暗箱结算
+        winners = []
+        pool = list(participants)
+        if target_id and target_id in pool:
+            winners.append(target_id)
+            pool.remove(target_id)
+        remaining = winner_count - len(winners)
+        if remaining > 0 and pool:
+            winners.extend(random.sample(pool, min(remaining, len(pool))))
+
+        await db.execute("UPDATE lotteries SET is_active = 0 WHERE id = ?", (lid,))
+        await db.commit()
+
+    # 查用户名构造中奖者列表
+    links = []
+    for wid in winners:
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT username FROM users WHERE tg_id = ?", (wid,),
+            ) as cur:
+                row = await cur.fetchone()
+        display = row[0] if row else f"用户{wid}"
+        links.append(f'<a href="tg://user?id={wid}">{display}</a>')
+
+    # 主群开奖喜报
+    text = (
+        f"🎉 *开奖啦！*\n\n"
+        f"抽奖：{title}\n"
+        f"奖品：{prize}\n"
+        f"中奖者：{', '.join(links)}\n\n"
+        f"恭喜中奖者！请联系管理员领取奖品。"
+    )
+    # 推送到所有注册群
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT chat_id FROM registered_chats") as cur:
+            chats = [row[0] for row in await cur.fetchall()]
+    if not chats:
+        chats = [MAIN_GROUP_ID]
+    for cid in chats:
+        try:
+            await bot.send_message(cid, text, parse_mode="HTML")
+            logger.info("抽奖 %s 开奖结果已推送 chat_id=%d", title, cid)
+        except Exception as e:
+            logger.error("开奖推送 chat_id=%d 失败: %s", cid, e)
+
+    # 私聊通知中奖者
+    for wid in winners:
+        try:
+            await bot.send_message(
+                wid,
+                f"🎉 恭喜中奖！\n\n抽奖：{title}\n奖品：{prize}\n\n请前往主群联系管理员领取奖品。",
+            )
+        except Exception as e:
+            logger.warning("通知中奖者 %d 失败: %s", wid, e)
+
+
+def reschedule_ad_interval(hours: int) -> None:
+    """动态修改老师轮播间隔"""
+    _scheduler.reschedule_job("teacher_ad", trigger="interval", hours=hours)
+    logger.info("广告轮播间隔已更新为 %d 小时", hours)
