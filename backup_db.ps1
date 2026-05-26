@@ -15,3 +15,6 @@ Get-ChildItem $BackupDir -Filter "*.db" | Where-Object {
 } | Remove-Item -Force
 
 Write-Host "[OK] 已备份: $Filename"
+
+# 发送到管理员 TG 私聊
+python "$PSScriptRoot\send_backup.py" "$BackupDir\$Filename" 2>&1 | Out-Null

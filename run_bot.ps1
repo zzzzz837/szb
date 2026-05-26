@@ -17,6 +17,7 @@ while ($true) {
     if (Test-Path "bot_database.db") {
         $name = "bot_database_$(Get-Date -Format 'yyyyMMdd_HHmmss').db"
         Copy-Item "bot_database.db" "$BackupDir\$name" -Force
+        python "$BotDir\send_backup.py" "$BackupDir\$name" 2>&1 | Out-Null
         Get-ChildItem $BackupDir -Filter "*.db" | Where-Object {
             $_.LastWriteTime -lt (Get-Date).AddDays(-14)
         } | Remove-Item -Force
