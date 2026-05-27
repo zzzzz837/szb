@@ -118,7 +118,7 @@ async def _guard_unmute_job(app):
                             can_add_web_page_previews=True,
                         ),
                     )
-                    async with db.execute(
+                    await db.execute(
                         "DELETE FROM guard_muted WHERE tg_id = ? AND chat_id = ?",
                         (tg_id, gid),
                     )
