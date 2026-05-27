@@ -29,6 +29,10 @@ async def init_db():
                 chat_type TEXT DEFAULT 'SLAVE'
             )
         """)
+        try:
+            await db.execute("ALTER TABLE registered_chats ADD COLUMN is_active INTEGER DEFAULT 1")
+        except Exception:
+            pass
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS attendance (

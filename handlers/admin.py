@@ -67,7 +67,8 @@ logger = logging.getLogger(__name__)
     TEACHER_PROMOTE_SHOW,
     LOTTERY_ADD_PHOTO,
     LOTTERY_CONFIRM,
-) = range(46)
+    GROUP_MENU,
+) = range(47)
 
 # ============================== 键盘构建 ==============================
 
@@ -80,7 +81,7 @@ def main_kb():
     return InlineKeyboardMarkup([
         [_btn("🛒 商品管理", "admin_product"), _btn("🎁 抽奖管理", "admin_lottery")],
         [_btn("👭 老师上榜", "admin_teacher"), _btn("🛡️ 风控看板", "admin_risk")],
-        [_btn("💰 积分管理", "admin_points")],
+        [_btn("💰 积分管理", "admin_points"), _btn("📋 群组管理", "admin_groups")],
     ])
 
 
@@ -1484,7 +1485,60 @@ async def required_channel_remove(update: Update, context):
     return REQUIRED_CHANNEL_MENU
 
 
-# ============================== ConversationHandler 构建 ==============================
+# ============================== 群组管理 ==============================
+
+
+async def group_management(update: Update, context):
+    """列出所有注册群组，显示管理状态"""
+    q = update.callback_query
+    await q.answer()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT chat_id, chat_title, chat_type, is_active FROM registered_chats ORDER BY chat_type, chat_id",
+        ) as cur:
+            groups = await cur.fetchall()
+
+    if not groups:
+        await q.edit_message_text(
+            "暂无已注册的群组。\n将 Bot 拉入群组后会自动注册。",
+            reply_markup=InlineKeyboardMarkup([[_btn("🔙 返回主菜单", "admin_main")]]),
+        )
+        return GROUP_MENU
+
+    lines = ["📋 *群组管理*\n"]
+    kb = []
+    for cid, title, ctype, active in groups:
+        icon = "✅" if active else "❌"
+        label = f"{icon} {title or '未命名'} ({ctype})"
+        lines.append(f"• {label}")
+        toggle_data = f"admin_group_disable_{cid}" if active else f"admin_group_enable_{cid}"
+        kb.append([_btn(f"{'🔓 停用' if active else '🔒 启用'} {title or cid}", toggle_data)])
+
+    kb.append([_btn("🔙 返回主菜单", "admin_main")])
+    await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
+    return GROUP_MENU
+
+
+async def group_toggle(update: Update, context):
+    """切换单个群的管理状态"""
+    q = update.callback_query
+    await q.answer()
+    parts = q.data.split("_")  # admin_group_disable/enable_<chat_id>
+    active = 0 if parts[2] == "disable" else 1
+    chat_id = int(parts[3])
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE registered_chats SET is_active = ? WHERE chat_id = ?",
+            (active, chat_id),
+        )
+        await db.commit()
+
+    from utils.filters import refresh_slave_groups
+    await refresh_slave_groups()
+
+    logger.info("群组 %s %s", chat_id, "停用" if not active else "启用")
+    return await group_management(update, context)
 
 
 def get_admin_conv_handler() -> ConversationHandler:
@@ -1504,6 +1558,13 @@ def get_admin_conv_handler() -> ConversationHandler:
                 CallbackQueryHandler(guard_toggle, pattern=r"^admin_guard_(on|off)$"),
                 CallbackQueryHandler(join_verify_toggle, pattern=r"^admin_verify_(on|off)$"),
                 CallbackQueryHandler(points_menu, pattern=r"^admin_points$"),
+                CallbackQueryHandler(group_management, pattern=r"^admin_groups$"),
+                CallbackQueryHandler(group_toggle, pattern=r"^admin_group_(enable|disable)_-\d+$"),
+                CallbackQueryHandler(go_main, pattern=r"^admin_main$"),
+            ],
+            # ---- 群组管理 ----
+            GROUP_MENU: [
+                CallbackQueryHandler(group_toggle, pattern=r"^admin_group_(enable|disable)_-\d+$"),
                 CallbackQueryHandler(go_main, pattern=r"^admin_main$"),
             ],
             # ---- 商品管理 ----

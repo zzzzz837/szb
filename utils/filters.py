@@ -13,7 +13,7 @@ async def refresh_slave_groups() -> None:
     global _SLAVE_IDS
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT chat_id FROM registered_chats WHERE chat_type = 'SLAVE'",
+            "SELECT chat_id FROM registered_chats WHERE chat_type = 'SLAVE' AND is_active = 1",
         ) as cur:
             _SLAVE_IDS = {row[0] for row in await cur.fetchall()}
 
