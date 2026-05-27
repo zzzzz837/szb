@@ -241,8 +241,10 @@ async def _build_leaderboard_page(chat_id: int, rank_type: str, page: int, conte
 
         elif rank_type == "invite":
             async with db.execute(
-                "SELECT inviter_id, COUNT(*) AS cnt FROM invitations WHERE status = 'SUCCESS' "
+                "SELECT inviter_id, COUNT(*) AS cnt FROM invitations "
+                "WHERE status = 'SUCCESS' AND chat_id = ? "
                 "GROUP BY inviter_id ORDER BY cnt DESC LIMIT 100",
+                (chat_id,),
             ) as cur:
                 rows = await cur.fetchall()
             if not rows:
@@ -295,15 +297,17 @@ async def leaderboard_page_callback(update: Update, context):
 
 
 async def invite_handler(update: Update, context):
-    """生成个人邀请链接"""
+    """生成当前群的个人邀请链接"""
     bot_me = context.bot_data.get("bot_me")
     if not bot_me:
         bot_me = await context.bot.get_me()
         context.bot_data["bot_me"] = bot_me
-    link = f"https://t.me/{bot_me.username}?start=invite_{update.effective_user.id}"
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    link = f"https://t.me/{bot_me.username}?start=invite_{chat_id}_{user_id}"
     await update.message.reply_text(
         f"🔗 你的专属邀请链接：\n{link}\n\n"
-        f"分享给好友，对方通过此链接注册后你将获得邀请奖励！",
+        f"分享给好友，对方通过此链接加入后你将获得邀请奖励！",
     )
 
 

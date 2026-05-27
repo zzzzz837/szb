@@ -71,10 +71,15 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 inviter_id INTEGER,
                 invitee_id INTEGER UNIQUE,
+                chat_id INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'PENDING',
                 created_at INTEGER
             )
         """)
+        try:
+            await db.execute("ALTER TABLE invitations ADD COLUMN chat_id INTEGER DEFAULT 0")
+        except Exception:
+            pass
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS products (

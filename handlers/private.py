@@ -50,13 +50,14 @@ async def start_handler(update: Update, context):
 
     param = args[0]
 
-    # --- 邀请裂变 /start invite_{id} ---
+    # --- 邀请裂变 /start invite_{chatId}_{userId} ---
     if param.startswith("invite_"):
-        parts = param.split("_", 1)
-        if len(parts) < 2 or not parts[1].isdigit():
+        parts = param.split("_")
+        if len(parts) < 3 or not parts[1].lstrip("-").isdigit() or not parts[2].isdigit():
             await update.message.reply_text("无效的邀请链接。")
             return
-        inviter_id = int(parts[1])
+        inviter_id = int(parts[2])
+        chat_id = int(parts[1])
         if inviter_id == user.id:
             await update.message.reply_text("不可以自己邀请自己哦！")
             return
@@ -68,9 +69,9 @@ async def start_handler(update: Update, context):
                     await update.message.reply_text("你已经在别人的邀请链路中了。")
                     return
             await db.execute(
-                "INSERT INTO invitations (inviter_id, invitee_id, status, created_at) "
-                "VALUES (?, ?, 'PENDING', ?)",
-                (inviter_id, user.id, _ts()),
+                "INSERT INTO invitations (inviter_id, invitee_id, chat_id, status, created_at) "
+                "VALUES (?, ?, ?, 'PENDING', ?)",
+                (inviter_id, user.id, chat_id, _ts()),
             )
             await db.commit()
             # 确保邀请人出现在 users 表
@@ -80,8 +81,17 @@ async def start_handler(update: Update, context):
             )
             await db.commit()
         link = GROUP_INVITE_LINK or "（请联系管理员获取入群链接）"
+        chat_title = f"群 {chat_id}"
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT chat_title FROM registered_chats WHERE chat_id = ?", (chat_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    chat_title = row[0]
         await update.message.reply_text(
             "🎉 欢迎加入我们！\n\n"
+            f"邀请来源：{chat_title}\n"
             f"请通过下方链接加入群组，进群后即可解锁完整功能：\n{link}\n\n"
             "进群后发送「签到」获取积分哦～",
         )
