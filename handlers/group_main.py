@@ -226,7 +226,10 @@ async def _build_leaderboard_page(chat_id: int, rank_type: str, page: int, conte
 
         elif rank_type == "points":
             async with db.execute(
-                "SELECT tg_id, username, points FROM users ORDER BY points DESC LIMIT 100",
+                "SELECT u.tg_id, u.username, u.points FROM users u "
+                "JOIN group_members gm ON u.tg_id = gm.tg_id AND gm.chat_id = ? "
+                "ORDER BY u.points DESC LIMIT 100",
+                (chat_id,),
             ) as cur:
                 rows = await cur.fetchall()
             if not rows:
