@@ -105,19 +105,21 @@ async def sign_in_handler(update: Update, context):
     today = _today()
 
     async with aiosqlite.connect(DB_PATH) as db:
-        # 重复签到拦截
+        chat_id = update.effective_chat.id
+
+        # 重复签到拦截（按群独立）
         async with db.execute(
-            "SELECT streak_days FROM attendance WHERE tg_id = ? AND log_date = ?",
-            (tg_id, today),
+            "SELECT streak_days FROM attendance WHERE tg_id = ? AND chat_id = ? AND log_date = ?",
+            (tg_id, chat_id, today),
         ) as cur:
             if await cur.fetchone():
                 await update.message.reply_text("您今天已经签到过了哦！")
                 return
 
-        # 计算连续天数
+        # 计算连续天数（按群独立）
         async with db.execute(
-            "SELECT streak_days FROM attendance WHERE tg_id = ? AND log_date = ?",
-            (tg_id, _yesterday()),
+            "SELECT streak_days FROM attendance WHERE tg_id = ? AND chat_id = ? AND log_date = ?",
+            (tg_id, chat_id, _yesterday()),
         ) as cur:
             row = await cur.fetchone()
         streak = (row[0] if row else 0) + 1
@@ -137,12 +139,11 @@ async def sign_in_handler(update: Update, context):
 
         # 写签到记录
         await db.execute(
-            "INSERT INTO attendance (tg_id, log_date, streak_days) VALUES (?, ?, ?)",
-            (tg_id, today, streak),
+            "INSERT INTO attendance (tg_id, chat_id, log_date, streak_days) VALUES (?, ?, ?, ?)",
+            (tg_id, chat_id, today, streak),
         )
 
         # 更新用户积分（写 group_members 和 users）
-        chat_id = update.effective_chat.id
 
         async with db.execute(
             "SELECT points FROM group_members WHERE tg_id = ? AND chat_id = ?",

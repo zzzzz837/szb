@@ -43,6 +43,29 @@ async def init_db():
             )
         """)
 
+        # 迁移：加入 chat_id 实现跨群独立签到
+        try:
+            await db.execute("ALTER TABLE attendance ADD COLUMN chat_id INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        else:
+            # 列不存在 → 说明旧表无 chat_id，重建 PK
+            await db.execute("""
+                CREATE TABLE attendance_v2 (
+                    tg_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL DEFAULT 0,
+                    log_date TEXT NOT NULL,
+                    streak_days INTEGER DEFAULT 1,
+                    PRIMARY KEY (tg_id, chat_id, log_date)
+                )
+            """)
+            await db.execute("""
+                INSERT OR IGNORE INTO attendance_v2 (tg_id, chat_id, log_date, streak_days)
+                SELECT tg_id, 0, log_date, streak_days FROM attendance
+            """)
+            await db.execute("DROP TABLE attendance")
+            await db.execute("ALTER TABLE attendance_v2 RENAME TO attendance")
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS invitations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
