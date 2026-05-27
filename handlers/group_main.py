@@ -274,7 +274,7 @@ async def _build_leaderboard_page(chat_id: int, rank_type: str, page: int, conte
 
 async def leaderboard_handler(update: Update, context):
     """排行榜入口 — 显示第 1 页"""
-    type_map = {"今日排行": "today", "活跃排行": "active", "积分排行": "points", "邀请排行": "invite"}
+    type_map = {"今日排行": "today", "今日发言": "today", "活跃排行": "active", "积分排行": "points", "邀请排行": "invite"}
     rank_type = type_map.get(update.message.text.strip())
     if not rank_type:
         return
@@ -340,6 +340,27 @@ async def admin_points_handler(update: Update, context):
                 "UPDATE users SET points = ?, username = ? WHERE tg_id = ?",
                 (new_pts, target.full_name, target.id),
             )
+
+        # 同步写当前群的 group_members，防止积分指令查不到
+        chat_id = update.effective_chat.id
+        async with db.execute(
+            "SELECT points FROM group_members WHERE tg_id = ? AND chat_id = ?",
+            (target.id, chat_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            new_group_pts = max(0, points)
+            await db.execute(
+                "INSERT INTO group_members (tg_id, chat_id, username, points, joined_at) VALUES (?, ?, ?, ?, ?)",
+                (target.id, chat_id, target.full_name, new_group_pts, _ts()),
+            )
+        else:
+            new_group_pts = max(0, row[0] + points)
+            await db.execute(
+                "UPDATE group_members SET points = ?, username = ? WHERE tg_id = ? AND chat_id = ?",
+                (new_group_pts, target.full_name, target.id, chat_id),
+            )
+
         await db.commit()
 
     display = target.username or target.full_name
@@ -540,7 +561,7 @@ def register_group_main(app) -> None:
 
     # 三大排行榜
     app.add_handler(MessageHandler(
-        (main_group | slave_group) & filters.Regex(r"^(今日排行|活跃排行|积分排行|邀请排行)$"),
+        (main_group | slave_group) & filters.Regex(r"^(今日排行|今日发言|活跃排行|积分排行|邀请排行)$"),
         leaderboard_handler,
     ))
 
