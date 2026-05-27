@@ -44,13 +44,88 @@ def init_scheduler(app, ad_interval: int = None) -> None:
         _expired_verify_job, "interval", minutes=1,
         args=[app], id="expired_verify", replace_existing=True,
     )
+    _scheduler.add_job(
+        _guard_unmute_job, "interval", minutes=2,
+        args=[app], id="guard_unmute", replace_existing=True,
+    )
     _scheduler.start()
-    logger.info("定时引擎已启动（广告轮播 %dh/次，自动开奖/过期验证 1m/次，数据库备份 6h/次）", AD_INTERVAL_HOURS)
+    logger.info("定时引擎已启动（广告轮播 %dh/次，自动开奖/过期验证/禁言扫描 1-2m/次，数据库备份 6h/次）", AD_INTERVAL_HOURS)
 
 
 async def _expired_verify_job(app):
     from handlers.join_verify import cleanup_expired_verifications
     await cleanup_expired_verifications(context=app)
+
+
+async def _guard_unmute_job(app):
+    """每 2 分钟扫描被禁言用户，已加入关联群组的自动解禁"""
+    import aiosqlite
+    from telegram import ChatPermissions
+    from config import DB_PATH, CHANNEL_ID
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        # 查询所有被禁言用户
+        async with db.execute(
+            "SELECT DISTINCT tg_id FROM guard_muted",
+        ) as cur:
+            muted_users = [r[0] for r in await cur.fetchall()]
+
+        if not muted_users:
+            return
+
+        # 获取需关注的群组列表（优先 DB，兜底 CHANNEL_ID）
+        async with db.execute(
+            "SELECT chat_id FROM required_channels",
+        ) as cur:
+            req_channels = [r[0] for r in await cur.fetchall()]
+        if not req_channels and CHANNEL_ID:
+            req_channels = [CHANNEL_ID]
+
+        if not req_channels:
+            return
+
+        bot = app.bot
+        for tg_id in muted_users:
+            # 检查用户是否已加入任一关联群组
+            joined_any = False
+            for cid in req_channels:
+                try:
+                    member = await bot.get_chat_member(chat_id=cid, user_id=tg_id)
+                    if member.status in ("member", "administrator", "creator"):
+                        joined_any = True
+                        break
+                except Exception:
+                    continue
+
+            if not joined_any:
+                continue
+
+            # 已加入 → 解禁所有群
+            async with db.execute(
+                "SELECT chat_id FROM guard_muted WHERE tg_id = ?", (tg_id,),
+            ) as cur:
+                mute_chats = [r[0] for r in await cur.fetchall()]
+
+            for gid in mute_chats:
+                try:
+                    await bot.restrict_chat_member(
+                        chat_id=gid, user_id=tg_id,
+                        permissions=ChatPermissions(
+                            can_send_messages=True,
+                            can_send_photos=True,
+                            can_send_videos=True,
+                            can_send_other_messages=True,
+                            can_add_web_page_previews=True,
+                        ),
+                    )
+                    async with db.execute(
+                        "DELETE FROM guard_muted WHERE tg_id = ? AND chat_id = ?",
+                        (tg_id, gid),
+                    )
+                    await db.commit()
+                    logger.info("定时解禁 user=%d chat=%d（已加入关联群组）", tg_id, gid)
+                except Exception as e:
+                    logger.warning("定时解禁失败 user=%d chat=%d: %s", tg_id, gid, e)
 
 
 async def _teacher_ad_job(app):
