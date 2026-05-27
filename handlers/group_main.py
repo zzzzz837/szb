@@ -144,25 +144,20 @@ async def sign_in_handler(update: Update, context):
         )
 
         # 更新用户积分（写 group_members 和 users）
-
         async with db.execute(
-            "SELECT points FROM group_members WHERE tg_id = ? AND chat_id = ?",
-            (tg_id, chat_id),
+            "SELECT points FROM users WHERE tg_id = ?", (tg_id,),
         ) as cur:
-            exist = await cur.fetchone()
+            row = await cur.fetchone()
+        user_pts = row[0] if row else 0
 
-        if exist is None:
-            current = total
-            await db.execute(
-                "INSERT INTO group_members (tg_id, chat_id, username, points, joined_at) VALUES (?, ?, ?, ?, ?)",
-                (tg_id, chat_id, user.full_name, current, _ts()),
-            )
-        else:
-            current = exist[0] + total
-            await db.execute(
-                "UPDATE group_members SET points = points + ?, username = ? WHERE tg_id = ? AND chat_id = ?",
-                (total, user.full_name, tg_id, chat_id),
-            )
+        await db.execute(
+            "INSERT INTO group_members (tg_id, chat_id, username, points, joined_at, total_msgs) "
+            "VALUES (?, ?, ?, ?, ?, 0) "
+            "ON CONFLICT(tg_id, chat_id) DO UPDATE SET "
+            "  points = points + ?,"
+            "  username = ?",
+            (tg_id, chat_id, user.full_name, total, _ts(), total, user.full_name),
+        )
 
         # 同步写全局 users 表
         await db.execute(
@@ -172,6 +167,7 @@ async def sign_in_handler(update: Update, context):
         )
         await db.commit()
 
+    current = user_pts + total
     text = (
         f"✨ 签到成功！\n"
         f"📅 连续签到：{streak} 天\n"
@@ -230,15 +226,14 @@ async def _build_leaderboard_page(chat_id: int, rank_type: str, page: int, conte
 
         elif rank_type == "points":
             async with db.execute(
-                "SELECT tg_id, username, points FROM group_members WHERE chat_id = ? ORDER BY points DESC LIMIT 100",
-                (chat_id,),
+                "SELECT tg_id, username, points FROM users ORDER BY points DESC LIMIT 100",
             ) as cur:
                 rows = await cur.fetchall()
             if not rows:
                 return "📭 暂无积分数据。", None
             total = len(rows)
             page_data = rows[start:end]
-            icon, title, unit = "🏆", "群积分", "分"
+            icon, title, unit = "🏆", "总积分", "分"
             items = [(uid, pts, uname) for uid, uname, pts in page_data]
 
         elif rank_type == "invite":
@@ -427,17 +422,15 @@ async def unmute_handler(update: Update, context):
 
 
 async def my_points_handler(update: Update, context):
-    """查自己在当前群的积分"""
+    """查自己的总积分（统一从 users 表读取）"""
     tg_id = update.effective_user.id
-    chat_id = update.effective_chat.id
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT points FROM group_members WHERE tg_id = ? AND chat_id = ?",
-            (tg_id, chat_id),
+            "SELECT points FROM users WHERE tg_id = ?", (tg_id,),
         ) as cur:
             row = await cur.fetchone()
     pts = row[0] if row else 0
-    await update.message.reply_text(f"💰 您在当前群的积分为：{pts} 分")
+    await update.message.reply_text(f"💰 您的总积分为：{pts} 分")
 
 
 async def shop_handler(update: Update, context):
